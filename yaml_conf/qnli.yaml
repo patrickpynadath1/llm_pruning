@@ -1,0 +1,4 @@
+label_col: ['question', 'sentence']
+data_col: ['label']
+model: anirudh21/bert-base-uncased-finetuned-qnli
+task_folder: QNLI

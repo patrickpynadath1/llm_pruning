@@ -1,0 +1,9 @@
+data_col:
+- sentence1
+- sentence2
+data_dir: glue_data
+label_col:
+- bin_label
+model: anirudh21/bert-base-uncased-finetuned-rte
+task_folder: RTE
+tokenizer: google-bert/bert-base-uncased

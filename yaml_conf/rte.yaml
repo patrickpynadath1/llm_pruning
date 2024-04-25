@@ -1,0 +1,4 @@
+data_col: ['sentence1', 'sentence2']
+label_col: ['bin_label']
+model: anirudh21/bert-base-uncased-finetuned-rte
+task_folder: RTE

@@ -1,0 +1,2 @@
+tokenizer: google-bert/bert-base-uncased
+data_dir: glue_data 

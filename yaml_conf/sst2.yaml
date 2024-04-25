@@ -1,0 +1,4 @@
+label_col: ['label']
+data_col: ['sentence']
+model: doyoungkim/bert-base-uncased-finetuned-sst2
+task_folder: SST-2

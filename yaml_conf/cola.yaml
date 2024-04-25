@@ -1,0 +1,4 @@
+data_col: [3]
+label_col: [1]
+model: avb/bert-base-uncased-finetuned-cola
+task_folder: CoLA
