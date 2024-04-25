@@ -1,0 +1,20 @@
+vanilla_ffn: 
+  train_iter: 2000 
+  inner_rank: 200 
+  percentile: 0
+  svd_bias: False
+svd_ffn: 
+  train_iter: 0
+  inner_rank: 10 
+  percentile: 0
+  svd_bias: False
+svd_ffn_train: 
+  train_iter: 2000 
+  inner_rank: 200
+  percentile: 0
+  svd_bias: False
+sparse_ffn: 
+  train_iter: 0
+  inner_rank: 0
+  percentile: .40
+  svd_bias: False
