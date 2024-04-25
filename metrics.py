@@ -1,5 +1,6 @@
 from torch.utils.data import DataLoader
 from sklearn.metrics import accuracy_score, f1_score, matthews_corrcoef
+from tqdm import tqdm
 
 
 def calc_accuracy(preds, ground_truth):
@@ -17,14 +18,19 @@ def calc_f1_score(preds, ground_truth):
     return f1
 
 
-def eval_model(model, dataset, batch_size=32):
-    eval_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+def eval_model(model, dataset):
     preds = []
     gt = []
-    for x, y in eval_dataloader:
-        batch_preds = model(x).argmax(dim=1)
-        preds.append(batch_preds.to_list())
-        gt.append(y.to_list())
+    for x in tqdm(dataset):
+        y = x["labels"]
+        out = model(
+            input_ids=x["input_ids"],
+            attention_mask=x["attention_mask"],
+            token_type_ids=x["token_type_ids"],
+        )
+        logits = out.logits
+        preds.append(logits.argmax(dim=-1).tolist())
+        gt.append(y.tolist())
     final_metrics = {
         "acc": calc_accuracy(preds, gt),
         "f1": calc_f1_score(preds, gt),

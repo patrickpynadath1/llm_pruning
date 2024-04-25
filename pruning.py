@@ -3,6 +3,8 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.nn import MSELoss
 import tqdm
+import numpy as np
+import json
 
 
 # sets the smallest (in terms of magnitude) weights to 0
@@ -16,16 +18,21 @@ def get_sparse_weights(data, percentile=0.25):
 
 
 class DeepSub(nn.Module):
-    def __init__(self, input_dim, inner_rank, output_dim) -> None:
+    def __init__(self, input_dim, inner_rank, output_dim, use_layer_norm=False) -> None:
         super().__init__()
         self.l1 = nn.Linear(in_features=input_dim, out_features=inner_rank)
         self.act = nn.GELU()
         self.l2 = nn.Linear(in_features=inner_rank, out_features=output_dim)
+        self.use_layer_norm = use_layer_norm
+        if use_layer_norm:
+            self.ln = nn.LayerNorm(output_dim)
 
     def forward(self, x):
         x = self.l1(x)
         x = self.act(x)
         x = self.l2(x)
+        if self.use_layer_norm:
+            x = self.ln(x)
         return x
 
 
@@ -55,14 +62,14 @@ def get_svd_ffn(w1, w2, l, bias=False):
     ul2, sv2 = truncated_svd(w2, l)
 
     w1_ffn_sv = nn.Linear(sv1.size(1), sv1.size(0), bias=bias)
-    w1_ffn_sv.weight.data = sv1
+    w1_ffn_sv.weight.data = sv1.contiguous()
     w1_ffn_ul = nn.Linear(ul1.size(1), ul1.size(0), bias=bias)
-    w1_ffn_ul.weight.data = ul1
+    w1_ffn_ul.weight.data = ul1.contiguous()
 
     w2_ffn_sv = nn.Linear(sv2.size(1), sv2.size(0), bias=bias)
-    w2_ffn_sv.weight.data = sv2
+    w2_ffn_sv.weight.data = sv2.contiguous()
     w2_ffn_ul = nn.Linear(ul2.size(1), ul2.size(0), bias=bias)
-    w2_ffn_ul.weight.data = ul2
+    w2_ffn_ul.weight.data = ul2.contiguous()
     svd_module = nn.Sequential(w1_ffn_sv, w1_ffn_ul, w2_ffn_sv, w2_ffn_ul)
     return svd_module
 
@@ -70,7 +77,7 @@ def get_svd_ffn(w1, w2, l, bias=False):
 def train_deep_sub(deep_sub, gt_module, training_iter, input_size):
     criterion = MSELoss()
     optimizer = Adam(deep_sub.parameters(), lr=0.001)
-    for _ in range(training_iter):
+    for _ in tqdm.tqdm(range(training_iter)):
         rand_batch = torch.randn((512, input_size))
         optimizer.zero_grad()
         output = deep_sub(rand_batch)
@@ -109,11 +116,30 @@ def train_deep_sub_svd(
 # at the end, compute the fro norm of all the resulting matrices. For each layer, prune all but the top
 # k attention heads
 # if we change the dataframe / ex text, do the heads pruned change? do the top heads change? etc
-def prune_attention_heads(summary_attention_tensor, topk=1):
-    # compute the frobenius norm of each matrix for i, j
-    # loop will be something like [i, j, :, :] compute frob norm
-    # return a dictionary where key = layer, value = list of heads to prune for that layer
-    return
+def prune_attention_heads(bert_model, dataset, indices_to_use, save_dir, topk=1):
+    attention_matrices = compute_attention_matrices(bert_model, dataset, indices_to_use)
+    prune_dict = {}
+    actual_frob_norms = {}
+    for layer_idx in range(attention_matrices.size(0)):
+        cur_layers = []
+        for head_idx in range(attention_matrices.size(1)):
+            frob_norm = torch.norm(
+                attention_matrices[layer_idx, head_idx, :, :], p="fro"
+            )
+            cur_layers.append(frob_norm)
+        
+        sorted = np.argsort(np.array(cur_layers))[::-1]
+        prune_dict[layer_idx] = list([int(l) for l in sorted])[:topk]
+        actual_frob_norms[layer_idx] = list([float(l) for l in cur_layers])
+
+    with open(f"{save_dir}/prune_dict.json", "w") as f:
+        print(prune_dict)
+        json.dump(prune_dict, f)
+    with open(f"{save_dir}/frob_norms.json", "w") as f:
+        # print(actual_frob_norms)
+        json.dump(actual_frob_norms, f)
+    bert_model.prune_heads(prune_dict)
+    return bert_model
 
 
 # function for computing summary attention matrix values
@@ -122,31 +148,42 @@ def prune_attention_heads(summary_attention_tensor, topk=1):
 # second dim = head in layer,
 # third dim = keys,
 # fourth dim = queries
-def compute_attention_matrices(bert_model, test_df):
+def compute_attention_matrices(bert_model, data_set, indices_to_use):
     running_attention_first_moment = None
     running_attention_second_moment = None
-    total = len(test_df)
-    for i in range(total):
-        cur_text = test_df.iloc[i]["text"]
-        # get the attention scores
-        attention = get_attention_scores(bert_model, cur_text)
-        if running_attention_first_moment == None:
-            running_attention_first_moment = attention
-            running_attention_second_moment = attention**2
-        else:
-            running_attention_first_moment += attention
-            running_attention_second_moment += attention**2
+    total = len(indices_to_use)
+    with torch.no_grad():
+        for i in tqdm.tqdm(indices_to_use):
+            cur_text = data_set[i]
+            # get the attention scores
+            attention = get_attention_scores(bert_model, cur_text)
+            if running_attention_first_moment == None:
+                running_attention_first_moment = attention
+                running_attention_second_moment = attention**2
+            else:
+                running_attention_first_moment += attention
+                running_attention_second_moment += attention**2
     # var[X] = (E[X])^2 - E[X^2]
     return (
         running_attention_first_moment / total
     ) ** 2 - running_attention_second_moment / total
 
 
-def get_attention_scores(bert_model, text):
+def get_attention_scores(bert_model, x):
     # tokenize the input
-    tokenized_input = bert_model.tokenizer(text, return_tensors="pt")
-    out = bert_model(tokenized_input)
-    return out.attentions
+    # tokenized_input = bert_model.tokenizer(text, return_tensors="pt")
+    out = (
+        torch.stack(
+            bert_model(
+                input_ids = x["input_ids"], 
+                token_type_ids = x["token_type_ids"], 
+                attention_mask = x["attention_mask"]
+            ).attentions
+        )
+        .permute(1, 0, 2, 3, 4)
+        .squeeze()
+    )
+    return out
 
 
 # main idea: replace the ffn in the bert model with a deeper and narrow network
@@ -179,28 +216,31 @@ def replace_bert_ffn(
 
         if strategy == "vanilla_ffn":
             deep_sub_intermediate = DeepSub(
-                input_dim=intermediate_weights.size(0),
+                input_dim=intermediate_weights.size(1),
                 inner_rank=inner_rank,
                 output_dim=inner_rank,
             )
             deep_sub_output = DeepSub(
                 input_dim=inner_rank,
                 inner_rank=inner_rank,
-                output_dim=intermediate_weights.size(0),
+                output_dim=intermediate_weights.size(1),
+                use_layer_norm=True,
             )
-            deep_sub_module = nn.Sequential(deep_sub_intermediate, deep_sub_output)
+            deep_sub_module = nn.Sequential(
+                deep_sub_intermediate, nn.GELU(), deep_sub_output
+            )
             deep_sub_module = train_deep_sub(
-                deep_sub_module, gt_module, train_iter, intermediate_weights.size(0)
+                deep_sub_module, gt_module, train_iter, intermediate_weights.size(1)
             )
             # replacing the big ffn with the deep sub module
             cur_layer.intermediate.dense = deep_sub_module[0]
-            cur_layer.output.dense = deep_sub_module[1]
+            cur_layer.output = deep_sub_module[1]
 
         elif strategy == "svd_ffn":
             svd_module = get_svd_ffn(sparse_intermediate, sparse_output, inner_rank)
             # TODO: how do you access modules in a sequential module?
-            cur_layer.intermediate.dense = nn.sequential(svd_module[0], svd_module[1])
-            cur_layer.output.dense = nn.sequential(svd_module[2], svd_module[3])
+            cur_layer.intermediate.dense = nn.Sequential(svd_module[0], svd_module[1])
+            cur_layer.output.dense = nn.Sequential(svd_module[2], svd_module[3])
 
         elif strategy == "svd_ffn_train":
             svd_module = get_svd_ffn(
@@ -208,14 +248,14 @@ def replace_bert_ffn(
             )
 
             svd_module = train_deep_sub(
-                svd_module, gt_module, train_iter, intermediate_weights.size(0)
+                svd_module, gt_module, train_iter, intermediate_weights.size(1)
             )
 
-            cur_layer.intermediate.dense = nn.sequential(svd_module[0], svd_module[1])
-            cur_layer.output.dense = nn.sequential(svd_module[2], svd_module[3])
+            cur_layer.intermediate.dense = nn.Sequential(svd_module[0], svd_module[1])
+            cur_layer.output.dense = nn.Sequential(svd_module[2], svd_module[3])
 
         elif strategy == "sparse_ffn":
             pass  # do nothing; already replaced the data with sparsified matrix
-    bert_model.save_pretrained(f"{save_dir}_{strategy}")
+    bert_model.save_pretrained(f"{save_dir}")
     print("Saved Model")
     return bert_model
