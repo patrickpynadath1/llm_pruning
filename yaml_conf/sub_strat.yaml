@@ -1,15 +1,18 @@
 vanilla_ffn: 
   train_iter: 2000 
-  inner_rank: 200 
-  percentile: 0
+  inner_rank: 5000 
+  percentile: .3
   svd_bias: False
 svd_ffn: 
-  train_iter: 0
-  inner_rank: 10 
-  percentile: 0
+  train_iter: 1000
+  inner_rank: 100 
+  percentile: .3
   svd_bias: False
+  grad_scaling: inputs_peturbed
+  rand_masking: .5 
+  rand_gibberish: .5
 svd_ffn_train: 
-  train_iter: 2000 
+  train_iter: 50 
   inner_rank: 200
   percentile: 0
   svd_bias: False
@@ -18,3 +21,4 @@ sparse_ffn:
   inner_rank: 0
   percentile: .40
   svd_bias: False
+

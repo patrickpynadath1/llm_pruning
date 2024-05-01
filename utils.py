@@ -2,15 +2,27 @@ import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer
 from transformers import AutoModelForSequenceClassification, AutoModel
+import numpy as np
+import torch
 
 
 class GLUE_Dataset(Dataset):
-    def __init__(self, data_df, data_cols, eval_col, tokenizer) -> None:
+    def __init__(self, 
+                 data_df, 
+                 data_cols, 
+                 eval_col, 
+                 tokenizer, 
+                 rand_masking=0.5,
+                 rand_gibberish = 0.5,
+                 mode="normal") -> None:
         super().__init__()
         self.data_df = data_df
         self.data_cols = data_cols
         self.eval_col = eval_col
         self.tokenizer = tokenizer
+        self.rand_masking = rand_masking
+        self.rand_gibberish = rand_gibberish
+        self.mode = mode
 
     def __len__(self):
         return len(self.data_df)
@@ -37,14 +49,42 @@ class GLUE_Dataset(Dataset):
                 max_length=128,
                 return_tensors="pt",
             )
+        if self.rand_masking > 0 and np.random.random() < self.rand_masking: 
+            tok_output["input_ids"] = self.random_mask(tok_output["input_ids"])
+        if self.rand_gibberish > 0 and np.random.random() < self.rand_gibberish:
+            tok_output["input_ids"] = self.random_gibberish(tok_output["input_ids"])
+
 
         return_dict = {
             "input_ids": tok_output["input_ids"],
             "attention_mask": tok_output["attention_mask"],
             "token_type_ids": tok_output["token_type_ids"],
-            "labels": self.data_df[self.eval_col].iloc[index],
+            "labels": torch.tensor(self.data_df[self.eval_col].iloc[index].values),
         }
         return return_dict
+    
+
+    def random_mask(self, tokens):
+        sentence_length = get_sentence_length(tokens)
+        tokens_to_return = tokens.clone()
+        percentage = self.rand_masking
+        indices = list(np.random.choice([i for i in range(1, sentence_length-1)], int(sentence_length * percentage), replace=False))
+        tokens_to_return[0, indices] =  103
+        return tokens_to_return
+
+    def random_gibberish(self, tokens):
+        sentence_length = get_sentence_length(tokens)
+        tokens_to_return = tokens.clone()
+        percentage = self.rand_gibberish
+        indices = list(np.random.choice([i for i in range(1, sentence_length-1)], int(sentence_length * percentage), replace=False))
+        rand_tokens = list(np.random.randint(0, 30522, len(indices)))
+        tokens_to_return[0, indices] = torch.tensor(rand_tokens)
+        return tokens_to_return
+
+
+def get_sentence_length(tokens):
+    sentence_length  = (tokens == 0).nonzero(as_tuple=True)[1][0]
+    return sentence_length
 
 
 def get_data_df(conf, train=False):

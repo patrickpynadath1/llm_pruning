@@ -1,8 +1,0 @@
-data_col:
-- sentence
-data_dir: glue_data
-label_col:
-- label
-model: doyoungkim/bert-base-uncased-finetuned-sst2
-task_folder: SST-2
-tokenizer: google-bert/bert-base-uncased

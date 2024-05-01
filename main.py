@@ -44,14 +44,15 @@ def load_conf(args):
         with open(conf_file, "r") as f:
             conf = yaml.safe_load(f)
             total_conf.update(conf)
+    print(total_conf)
     return total_conf
 
 
 def config_options():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--task", type=str, default="sst2", choices=DATASET_CHOICES)
+    parser.add_argument("--task", type=str, default="rte", choices=DATASET_CHOICES)
     parser.add_argument(
-        "--pruning_strat", type=str, choices=PRUNING_CHOICES, default="var_at_once"
+        "--pruning_strat", type=str, choices=PRUNING_CHOICES, default="none"
     )
     parser.add_argument("--output_dir", type=str, default="outputs_dir")
     parser.add_argument("--yaml_path", type=str, default="yaml_conf")
@@ -71,26 +72,51 @@ def main(args):
     data_df = get_data_df(conf, train=False)
     dataset = GLUE_Dataset(data_df, conf["data_col"], conf["label_col"], tokenizer)
     if args.pruning_strat != "none":
-        # select sample indices 
-        prune_data_df = get_data_df(conf, train=True)
-        prune_dataset = GLUE_Dataset(prune_data_df, conf["data_col"], conf["label_col"], tokenizer)
-        num_samples = conf['num_samples']
-        sample_indices = list(np.random.choice(len(prune_data_df), num_samples, replace=False))
+        # select sample indices
+        sub_data_df = get_data_df(conf, train=True)
+        sub_dataset = GLUE_Dataset(
+            sub_data_df,
+            conf["data_col"],
+            conf["label_col"],
+            tokenizer,
+            rand_masking=conf["rand_masking"],
+            rand_gibberish=conf["rand_gibberish"],
+        )
+        num_samples = conf["num_samples"]
+        sample_indices = list(
+            np.random.choice(len(sub_data_df), num_samples, replace=True)
+        )
         # prune
-        model = prune_attention_heads(model, 
-                                      prune_dataset, 
-                                      sample_indices,
-                                      save_dir,
-                                      conf["topk"])
-    if args.sub_strat != "none":
-        # v
-        model = replace_bert_ffn(model, 
-                                 args.sub_strat, 
-                                 train_iter=conf[args.sub_strat]["train_iter"], 
-                                 save_dir=save_dir,
-                                 inner_rank=conf[args.sub_strat]["inner_rank"],
-                                 percentile=conf[args.sub_strat]["percentile"],
-                                 svd_bias=conf[args.sub_strat]["svd_bias"])
+        model = prune_attention_heads(
+            model, sub_dataset, sample_indices, save_dir, conf["topk"], strat=conf["strat"]
+        )
+    if args.sub_strat != "none": 
+        num_samples = conf[args.sub_strat]["train_iter"]
+        sub_data_df = get_data_df(conf, train=True)
+        sample_indices = list(
+            np.random.choice(len(sub_data_df), num_samples, replace=True)
+        )
+
+        sub_dataset = GLUE_Dataset(
+            sub_data_df,
+            conf["data_col"],
+            conf["label_col"],
+            tokenizer,
+            rand_masking=conf["svd_ffn"]["rand_masking"],
+            rand_gibberish=conf["svd_ffn"]["rand_gibberish"],
+        )
+        model = replace_bert_ffn(
+            model,
+            args.sub_strat,
+            train_iter=conf[args.sub_strat]["train_iter"],
+            save_dir=save_dir,
+            inner_rank=conf[args.sub_strat]["inner_rank"],
+            percentile=conf[args.sub_strat]["percentile"],
+            svd_bias=conf[args.sub_strat]["svd_bias"],
+            dataset=sub_dataset,
+            grad_scaling=conf[args.sub_strat]["grad_scaling"],
+            sample_indices=sample_indices,
+        )
     final_metrics = eval_model(model, dataset)
     # outputting the final eval metrics
     with open(f"{save_dir}/metrics.json", "w") as f:

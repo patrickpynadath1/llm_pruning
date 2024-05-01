@@ -21,19 +21,25 @@ def calc_f1_score(preds, ground_truth):
 def eval_model(model, dataset):
     preds = []
     gt = []
-    for x in tqdm(dataset):
-        y = x["labels"]
-        out = model(
-            input_ids=x["input_ids"],
-            attention_mask=x["attention_mask"],
-            token_type_ids=x["token_type_ids"],
-        )
-        logits = out.logits
-        preds.append(logits.argmax(dim=-1).tolist())
-        gt.append(y.tolist())
+    for i in tqdm(range(len(dataset))):
+        try: 
+            x = dataset[i]
+            y = x["labels"]
+            out = model(
+                input_ids=x["input_ids"],
+                attention_mask=x["attention_mask"],
+                token_type_ids=x["token_type_ids"],
+            )
+            logits = out.logits
+            preds.append(logits.argmax(dim=-1).tolist())
+            gt.append(y.tolist())
+        except: 
+            print("Error in eval_model")
+            continue
     final_metrics = {
         "acc": calc_accuracy(preds, gt),
         "f1": calc_f1_score(preds, gt),
         "mcc": calc_matthew_correlation(preds, gt),
+        "model_size": model.num_parameters(),
     }
     return final_metrics

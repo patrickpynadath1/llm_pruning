@@ -1,9 +1,0 @@
-data_col:
-- sentence1
-- sentence2
-data_dir: glue_data
-label_col:
-- label
-model: anirudh21/bert-base-uncased-finetuned-wnli
-task_folder: WNLI
-tokenizer: google-bert/bert-base-uncased

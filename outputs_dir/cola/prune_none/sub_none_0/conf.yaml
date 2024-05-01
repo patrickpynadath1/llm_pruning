@@ -1,8 +1,0 @@
-data_col:
-- 3
-data_dir: glue_data
-label_col:
-- 1
-model: avb/bert-base-uncased-finetuned-cola
-task_folder: CoLA
-tokenizer: google-bert/bert-base-uncased
